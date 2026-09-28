@@ -18,24 +18,24 @@ ticker_symbol = st.sidebar.text_input("Inserisci Ticker (es. RACE, NKE, DUOL, ZT
 @st.cache_data(ttl=3600)
 def load_stock_data(symbol):
     try:
-        ticker = yf.Ticker(symbol)
-        info = ticker.info
-        financials = ticker.financials
-        cashflow = ticker.cashflow
-        balance = ticker.balance_sheet
-        return ticker, info, financials, cashflow, balance
-    except Exception as e:
-        return None, None, None, None, None
+        t = yf.Ticker(symbol)
+        info = t.info if t.info else {}
+        financials = t.financials if t.financials is not None else pd.DataFrame()
+        cashflow = t.cashflow if t.cashflow is not None else pd.DataFrame()
+        balance = t.balance_sheet if t.balance_sheet is not None else pd.DataFrame()
+        return info, financials, cashflow, balance
+    except Exception:
+        return {}, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 if ticker_symbol:
     with st.spinner(f"Caricamento dati per {ticker_symbol}..."):
-        ticker, info, financials, cashflow, balance = load_stock_data(ticker_symbol)
+        info, financials, cashflow, balance = load_stock_data(ticker_symbol)
 
-    if not info or 'shortName' not in info:
+    if not info or ('shortName' not in info and 'longName' not in info):
         st.error(f"Impossibile recuperare i dati per il ticker '{ticker_symbol}'. Verificare che sia corretto su Yahoo Finance.")
     else:
         # Intestazione Azienda
-        company_name = info.get('longName', ticker_symbol)
+        company_name = info.get('longName', info.get('shortName', ticker_symbol))
         sector = info.get('sector', 'N/A')
         industry = info.get('industry', 'N/A')
         current_price = info.get('currentPrice', info.get('regularMarketPrice', 0))
@@ -64,9 +64,7 @@ if ticker_symbol:
         with tab1:
             st.subheader("🏥 Punteggio di Salute Finanziaria (Health Score)")
             
-            # Calcolo Punteggio di Salute Finanziaria (Algoritmo Personalizzato 0-100)
             score = 0
-            max_score = 100
             checks = []
 
             # 1. Redditività (ROE)
@@ -113,7 +111,6 @@ if ticker_symbol:
             else:
                 checks.append("❌ **Liquidità Rischiosa (Current Ratio < 1.0)**: Possibili tensioni di cassa.")
 
-            # Display Score
             col_s1, col_s2 = st.columns([1, 2])
             with col_s1:
                 st.metric(label="Health Score complessivo", value=f"{score} / 100")
@@ -131,7 +128,6 @@ if ticker_symbol:
 
             st.divider()
 
-            # Multipli e Indicatori Principali
             st.subheader("📌 Multipli e Indicatori Fondamentali")
             m1, m2, m3, m4, m5 = st.columns(5)
             
@@ -159,16 +155,13 @@ if ticker_symbol:
             fcf = info.get('freeCashflow', 0) or 0
             shares = info.get('sharesOutstanding', 1) or 1
 
-            # 1. Modello Numero di Graham (per value stock stabili)
             graham_value = np.sqrt(22.5 * max(0, eps) * max(0, bvps)) if (eps > 0 and bvps > 0) else None
 
-            # 2. Modello DCF Semplificato (Discounted Cash Flow)
             col_dcf1, col_dcf2 = st.columns(2)
             with col_dcf1:
                 growth_rate = st.slider("Tasso di Crescita FCF Annuo Atteso (%)", 0.0, 30.0, 8.0, 0.5) / 100
                 discount_rate = st.slider("Tasso di Sconto / WACC (%)", 5.0, 15.0, 9.0, 0.5) / 100
 
-            # Calcolo DCF a 5 anni + Valore Terminale
             fcf_per_share = (fcf / shares) if (fcf and shares) else (eps * 0.8)
             future_fcf = [fcf_per_share * ((1 + growth_rate) ** i) for i in range(1, 6)]
             discounted_fcf = [fcf / ((1 + discount_rate) ** i) for i, fcf in enumerate(future_fcf, start=1)]
@@ -178,7 +171,6 @@ if ticker_symbol:
             
             dcf_fair_value = sum(discounted_fcf) + discounted_terminal_value if fcf_per_share > 0 else None
 
-            # Risultati Valutazione
             st.divider()
             v1, v2, v3 = st.columns(3)
             
@@ -188,7 +180,6 @@ if ticker_symbol:
             v3.metric("Valore di Graham", f"{graham_value:,.2f} {currency}" if graham_value else "N/A",
                       delta=f"{((graham_value - current_price) / current_price)*100:.1f}%" if graham_value else None)
 
-            # Target Analyst Consensus
             target_mean = info.get('targetMeanPrice', None)
             if target_mean:
                 st.info(f"🎯 **Target Price Medio degli Analisti Wall Street:** {target_mean:,.2f} {currency} (Potenziale: {((target_mean - current_price)/current_price)*100:+.1f}%)")
@@ -200,13 +191,12 @@ if ticker_symbol:
             st.subheader("📈 Andamento Storico di Bilancio")
             
             if financials is not None and not financials.empty:
-                # Estrazione dati storici
                 rev_key = [k for k in financials.index if 'Total Revenue' in k or 'Revenue' in k]
                 net_key = [k for k in financials.index if 'Net Income' in k]
 
                 if rev_key and net_key:
                     years = [str(col.year) for col in financials.columns]
-                    revenues = financials.loc[rev_key[0]].values / 1e6  # in milioni
+                    revenues = financials.loc[rev_key[0]].values / 1e6
                     net_incomes = financials.loc[net_key[0]].values / 1e6
 
                     df_chart = pd.DataFrame({
@@ -238,18 +228,21 @@ if ticker_symbol:
 
                 peer_data = []
                 for p in peer_list:
-                    p_info = yf.Ticker(p).info
-                    if p_info and 'shortName' in p_info:
-                        peer_data.append({
-                            'Ticker': p,
-                            'Nome': p_info.get('shortName', p),
-                            'Prezzo': p_info.get('currentPrice', 0),
-                            'P/E (Trailing)': p_info.get('trailingPE', None),
-                            'P/S': p_info.get('priceToSalesTrailing12Months', None),
-                            'ROE (%)': (p_info.get('returnOnEquity', 0) or 0) * 100,
-                            'Margine Netto (%)': (p_info.get('profitMargins', 0) or 0) * 100,
-                            'Market Cap (Mld)': (p_info.get('marketCap', 0) or 0) / 1e9
-                        })
+                    try:
+                        p_info = yf.Ticker(p).info
+                        if p_info and ('shortName' in p_info or 'longName' in p_info):
+                            peer_data.append({
+                                'Ticker': p,
+                                'Nome': p_info.get('shortName', p),
+                                'Prezzo': p_info.get('currentPrice', 0),
+                                'P/E (Trailing)': p_info.get('trailingPE', None),
+                                'P/S': p_info.get('priceToSalesTrailing12Months', None),
+                                'ROE (%)': (p_info.get('returnOnEquity', 0) or 0) * 100,
+                                'Margine Netto (%)': (p_info.get('profitMargins', 0) or 0) * 100,
+                                'Market Cap (Mld)': (p_info.get('marketCap', 0) or 0) / 1e9
+                            })
+                    except Exception:
+                        continue
                 
                 if peer_data:
                     df_peers = pd.DataFrame(peer_data)
