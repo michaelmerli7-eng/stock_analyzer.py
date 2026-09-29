@@ -2,9 +2,8 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import numpy as np
-import plotly.graph_objects as go
 import plotly.express as px
-import requests
+from curl_cffi import requests
 
 # Configurazione Pagina
 st.set_page_config(page_title="App N. 2 - Stock Analyzer & Fair Value", layout="wide")
@@ -19,9 +18,8 @@ ticker_symbol = st.sidebar.text_input("Inserisci Ticker (es. RACE, NKE, DUOL, ZT
 @st.cache_data(ttl=3600)
 def load_stock_data(symbol):
     try:
-        # Creazione di una sessione con User-Agent per evitare blocchi da Yahoo Finance su Cloud
-        session = requests.Session()
-        session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        # Usa curl_cffi per impersonare Chrome e bypassare il blocco anti-bot di Yahoo Finance su Cloud
+        session = requests.Session(impersonate="chrome")
         
         t = yf.Ticker(symbol, session=session)
         info = t.info if t.info else {}
@@ -37,7 +35,7 @@ if ticker_symbol:
         info, financials, cashflow, balance = load_stock_data(ticker_symbol)
 
     if not info or ('shortName' not in info and 'longName' not in info and 'currentPrice' not in info and 'regularMarketPrice' not in info):
-        st.error(f"Impossibile recuperare i dati per il ticker '{ticker_symbol}'. Prova a verificare il ticker su Yahoo Finance (es. 'RACE' per Ferrari a New York o 'RACE.MI' per Milano).")
+        st.error(f"Impossibile recuperare i dati per il ticker '{ticker_symbol}'. Verifica che sia corretto su Yahoo Finance (es. 'RACE' per Ferrari a New York o 'RACE.MI' per Milano).")
     else:
         # Intestazione Azienda
         company_name = info.get('longName', info.get('shortName', ticker_symbol))
@@ -90,7 +88,7 @@ if ticker_symbol:
                 checks.append("✅ **Margine Netto Elevato (> 15%)**: Forte potere di prezzo e redditività.")
             elif profit_margin > 0.05:
                 score += 15
-                checks.append("⚠️️ **Margine Netto Basso (5% - 15%)**: Margini accettabili.")
+                checks.append("⚠ **Margine Netto Basso (5% - 15%)**: Margini accettabili.")
             else:
                 checks.append("❌ **Margine Netto Ridotto (< 5%)**: A rischio in caso di aumento dei costi.")
 
@@ -223,8 +221,8 @@ if ticker_symbol:
         # TAB 4: CONFRONTO COMPETITOR
         # ==========================================
         with tab4:
-            st.subheader("⚔️ Confronto Diretto con Competitor")
-            peers_input = st.text_input("Inserisci altri Ticker da confrontare (separati da comma):", value="NKE, RACE, AAPL")
+            st.subheader("⚔️️ Confronto Diretto con Competitor")
+            peers_input = st.text_input("Inserisci altri Ticker da confrontare (separati da virgola):", value="NKE, RACE, AAPL")
             
             if peers_input:
                 peer_list = [p.strip().upper() for p in peers_input.split(",") if p.strip()]
@@ -234,8 +232,7 @@ if ticker_symbol:
                 peer_data = []
                 for p in peer_list:
                     try:
-                        session_p = requests.Session()
-                        session_p.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                        session_p = requests.Session(impersonate="chrome")
                         p_ticker = yf.Ticker(p, session=session_p)
                         p_info = p_ticker.info if p_ticker.info else {}
                         
