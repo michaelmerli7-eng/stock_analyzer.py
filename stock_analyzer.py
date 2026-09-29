@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
 import plotly.express as px
+import requests
 
 # Configurazione Pagina
 st.set_page_config(page_title="App N. 2 - Stock Analyzer & Fair Value", layout="wide")
@@ -18,21 +19,25 @@ ticker_symbol = st.sidebar.text_input("Inserisci Ticker (es. RACE, NKE, DUOL, ZT
 @st.cache_data(ttl=3600)
 def load_stock_data(symbol):
     try:
-        t = yf.Ticker(symbol)
+        # Creazione di una sessione con User-Agent per evitare blocchi da Yahoo Finance su Cloud
+        session = requests.Session()
+        session.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+        
+        t = yf.Ticker(symbol, session=session)
         info = t.info if t.info else {}
         financials = t.financials if t.financials is not None else pd.DataFrame()
         cashflow = t.cashflow if t.cashflow is not None else pd.DataFrame()
         balance = t.balance_sheet if t.balance_sheet is not None else pd.DataFrame()
         return info, financials, cashflow, balance
-    except Exception:
+    except Exception as e:
         return {}, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 if ticker_symbol:
     with st.spinner(f"Caricamento dati per {ticker_symbol}..."):
         info, financials, cashflow, balance = load_stock_data(ticker_symbol)
 
-    if not info or ('shortName' not in info and 'longName' not in info):
-        st.error(f"Impossibile recuperare i dati per il ticker '{ticker_symbol}'. Verificare che sia corretto su Yahoo Finance.")
+    if not info or ('shortName' not in info and 'longName' not in info and 'currentPrice' not in info and 'regularMarketPrice' not in info):
+        st.error(f"Impossibile recuperare i dati per il ticker '{ticker_symbol}'. Prova a verificare il ticker su Yahoo Finance (es. 'RACE' per Ferrari a New York o 'RACE.MI' per Milano).")
     else:
         # Intestazione Azienda
         company_name = info.get('longName', info.get('shortName', ticker_symbol))
@@ -46,7 +51,7 @@ if ticker_symbol:
             st.header(f"{company_name} ({ticker_symbol})")
             st.caption(f"Settore: **{sector}** | Industria: **{industry}** | Valuta: **{currency}**")
         with col_header2:
-            st.metric(label="Prezzo Attuale", value=f"{current_price:,.2f} {currency}")
+            st.metric(label="Prezzo Attuale", value=f"{current_price:,.2f} {currency}" if current_price else "N/A")
 
         st.divider()
 
@@ -85,7 +90,7 @@ if ticker_symbol:
                 checks.append("✅ **Margine Netto Elevato (> 15%)**: Forte potere di prezzo e redditività.")
             elif profit_margin > 0.05:
                 score += 15
-                checks.append("⚠️ **Margine Netto Basso (5% - 15%)**: Margini accettabili.")
+                checks.append("⚠️️ **Margine Netto Basso (5% - 15%)**: Margini accettabili.")
             else:
                 checks.append("❌ **Margine Netto Ridotto (< 5%)**: A rischio in caso di aumento dei costi.")
 
@@ -141,7 +146,7 @@ if ticker_symbol:
             m2.metric("P/E (Forward)", f"{fwd_pe:.2f}" if fwd_pe else "N/A")
             m3.metric("P/S (Price/Sales)", f"{ps:.2f}" if ps else "N/A")
             m4.metric("P/B (Price/Book)", f"{pb:.2f}" if pb else "N/A")
-            m5.metric("Dividend Yield", f"{div_yield * 100:.2f}%")
+            m5.metric("Dividend Yield", f"{div_yield * 100:.2f}%" if div_yield else "N/A")
 
         # ==========================================
         # TAB 2: VALUTAZIONE FAIR VALUE
@@ -164,7 +169,7 @@ if ticker_symbol:
 
             fcf_per_share = (fcf / shares) if (fcf and shares) else (eps * 0.8)
             future_fcf = [fcf_per_share * ((1 + growth_rate) ** i) for i in range(1, 6)]
-            discounted_fcf = [fcf / ((1 + discount_rate) ** i) for i, fcf in enumerate(future_fcf, start=1)]
+            discounted_fcf = [f / ((1 + discount_rate) ** i) for i, f in enumerate(future_fcf, start=1)]
             
             terminal_value = (future_fcf[-1] * 1.02) / (discount_rate - 0.02) if discount_rate > 0.02 else 0
             discounted_terminal_value = terminal_value / ((1 + discount_rate) ** 5)
@@ -174,11 +179,11 @@ if ticker_symbol:
             st.divider()
             v1, v2, v3 = st.columns(3)
             
-            v1.metric("Prezzo Attuale", f"{current_price:,.2f} {currency}")
+            v1.metric("Prezzo Attuale", f"{current_price:,.2f} {currency}" if current_price else "N/A")
             v2.metric("Fair Value (DCF)", f"{dcf_fair_value:,.2f} {currency}" if dcf_fair_value else "N/A",
-                      delta=f"{((dcf_fair_value - current_price) / current_price)*100:.1f}%" if dcf_fair_value else None)
+                      delta=f"{((dcf_fair_value - current_price) / current_price)*100:.1f}%" if (dcf_fair_value and current_price) else None)
             v3.metric("Valore di Graham", f"{graham_value:,.2f} {currency}" if graham_value else "N/A",
-                      delta=f"{((graham_value - current_price) / current_price)*100:.1f}%" if graham_value else None)
+                      delta=f"{((graham_value - current_price) / current_price)*100:.1f}%" if (graham_value and current_price) else None)
 
             target_mean = info.get('targetMeanPrice', None)
             if target_mean:
@@ -229,12 +234,16 @@ if ticker_symbol:
                 peer_data = []
                 for p in peer_list:
                     try:
-                        p_info = yf.Ticker(p).info
-                        if p_info and ('shortName' in p_info or 'longName' in p_info):
+                        session_p = requests.Session()
+                        session_p.headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                        p_ticker = yf.Ticker(p, session=session_p)
+                        p_info = p_ticker.info if p_ticker.info else {}
+                        
+                        if p_info and ('shortName' in p_info or 'longName' in p_info or 'currentPrice' in p_info):
                             peer_data.append({
                                 'Ticker': p,
-                                'Nome': p_info.get('shortName', p),
-                                'Prezzo': p_info.get('currentPrice', 0),
+                                'Nome': p_info.get('longName', p_info.get('shortName', p)),
+                                'Prezzo': p_info.get('currentPrice', p_info.get('regularMarketPrice', 0)),
                                 'P/E (Trailing)': p_info.get('trailingPE', None),
                                 'P/S': p_info.get('priceToSalesTrailing12Months', None),
                                 'ROE (%)': (p_info.get('returnOnEquity', 0) or 0) * 100,
