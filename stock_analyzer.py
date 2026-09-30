@@ -294,49 +294,89 @@ if ticker_symbol:
         )
 
     # ==========================================
-    # TAB 3: TREND DI BILANCIO & PREZZO (DOPPIO ASSE)
+    # TAB 3: TREND DI BILANCIO & PREZZO (FILTRI + UTILE)
     # ==========================================
     with tab3:
-      st.subheader(
-          "📈 Confronto Storico: Prezzo Azione vs Fatturato Annuale"
-      )
-      st.write(
-          "Questo grafico unisce l'andamento del prezzo giornaliero del titolo"
-          " (asse destro) con il fatturato registrato nei bilanci annuali"
-          " (colonne verdi, asse sinistro)."
-      )
+      st.subheader("📈 Trend Storico: Prezzo, Fatturato e Utile Netto")
 
       if (
           financials is not None
           and not financials.empty
           and not history.empty
       ):
+        # Controlli di selezione (Periodo e Utile Netto)
+        col_ctrl1, col_ctrl2 = st.columns([3, 1])
+        with col_ctrl1:
+          timeframe = st.radio(
+              "Seleziona Periodo Prezzo:",
+              ["3 Mesi", "1 Anno", "5 Anni", "10 Anni", "20 Anni", "Max"],
+              horizontal=True,
+              index=2,  # Default a 5 Anni
+          )
+        with col_ctrl2:
+          show_net_income = st.checkbox(
+              "Mostra Utile Netto", value=True, key="net_income_chk"
+          )
+
+        # Filtraggio della history in base al periodo scelto
+        hist_filtered = history.copy()
+        if hist_filtered.index.tz is not None:
+          hist_filtered.index = hist_filtered.index.tz_localize(None)
+
+        now = pd.Timestamp.now()
+        if timeframe == "3 Mesi":
+          hist_filtered = hist_filtered[
+              hist_filtered.index >= (now - pd.DateOffset(months=3))
+          ]
+        elif timeframe == "1 Anno":
+          hist_filtered = hist_filtered[
+              hist_filtered.index >= (now - pd.DateOffset(years=1))
+          ]
+        elif timeframe == "5 Anni":
+          hist_filtered = hist_filtered[
+              hist_filtered.index >= (now - pd.DateOffset(years=5))
+          ]
+        elif timeframe == "10 Anni":
+          hist_filtered = hist_filtered[
+              hist_filtered.index >= (now - pd.DateOffset(years=10))
+          ]
+        elif timeframe == "20 Anni":
+          hist_filtered = hist_filtered[
+              hist_filtered.index >= (now - pd.DateOffset(years=20))
+          ]
+        # "Max" mostra tutto
+
         rev_key = [
             k
             for k in financials.index
             if "Total Revenue" in k or "Revenue" in k
         ]
+        net_key = [
+            k
+            for k in financials.index
+            if "Net Income" in k and "Common" not in k
+        ]
+        if not net_key:
+          net_key = [k for k in financials.index if "Net Income" in k]
 
+        fig = make_subplots(specs=[[{"secondary_y": True}]])
+
+        # 1. Linea del Prezzo Azione (Asse secondario - Destra)
+        if "Close" in hist_filtered.columns:
+          fig.add_trace(
+              go.Scatter(
+                  x=hist_filtered.index,
+                  y=hist_filtered["Close"],
+                  name="Prezzo Azione",
+                  line=dict(color="#1f77b4", width=2),
+              ),
+              secondary_y=True,
+          )
+
+        # 2. Barre del Fatturato (Asse primario - Sinistra)
         if rev_key:
-          # Creazione della figura con doppio asse Y
-          fig = make_subplots(specs=[[{"secondary_y": True}]])
-
-          # 1. Linea del Prezzo Azione (Asse Y Secondario - Destra)
-          if "Close" in history.columns:
-            fig.add_trace(
-                go.Scatter(
-                    x=history.index,
-                    y=history["Close"],
-                    name="Prezzo Azione",
-                    line=dict(color="#1f77b4", width=2),
-                ),
-                secondary_y=True,
-            )
-
-          # 2. Barre del Fatturato Annuale (Asse Y Primario - Sinistra)
           rev_dates = financials.columns
-          rev_values = financials.loc[rev_key[0]].values / 1e6  # Convertito in Milioni
-
+          rev_values = financials.loc[rev_key[0]].values / 1e6
           fig.add_trace(
               go.Bar(
                   x=rev_dates,
@@ -348,34 +388,41 @@ if ticker_symbol:
               secondary_y=False,
           )
 
-          # Layout e assi
-          fig.update_layout(
-              title=f"Correlazione Prezzo / Fatturato - {ticker_symbol}",
-              xaxis_title="Data / Anno Fiscale",
-              hovermode="x unified",
-              legend=dict(
-                  orientation="h",
-                  yanchor="bottom",
-                  y=1.02,
-                  xanchor="right",
-                  x=1,
+        # 3. Barre dell'Utile Netto (Se spuntato)
+        if show_net_income and net_key:
+          net_dates = financials.columns
+          net_values = financials.loc[net_key[0]].values / 1e6
+          fig.add_trace(
+              go.Bar(
+                  x=net_dates,
+                  y=net_values,
+                  name=f"Utile Netto ({currency} Mln)",
+                  marker_color="#ff7f0e",
+                  opacity=0.7,
               ),
-          )
-
-          fig.update_yaxes(
-              title_text=f"<b>Fatturato</b> (Milioni {currency})",
               secondary_y=False,
           )
-          fig.update_yaxes(
-              title_text=f"<b>Prezzo Azione</b> ({currency})", secondary_y=True
-          )
 
-          st.plotly_chart(fig, use_container_width=True)
-        else:
-          st.info(
-              "Dati dettagliati sul fatturato non disponibili per questo"
-              " titolo."
-          )
+        # Layout del grafico
+        fig.update_layout(
+            title=f"Analisi di {ticker_symbol} - Periodo: {timeframe}",
+            xaxis_title="Data",
+            hovermode="x unified",
+            barmode="group",
+            legend=dict(
+                orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1
+            ),
+        )
+
+        fig.update_yaxes(
+            title_text=f"<b>Valori di Bilancio</b> ({currency} Mln)",
+            secondary_y=False,
+        )
+        fig.update_yaxes(
+            title_text=f"<b>Prezzo Azione</b> ({currency})", secondary_y=True
+        )
+
+        st.plotly_chart(fig, use_container_width=True)
       else:
         st.info("Dati storici o di bilancio insufficienti per il grafico.")
 
