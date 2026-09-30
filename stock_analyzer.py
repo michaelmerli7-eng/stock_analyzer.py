@@ -244,6 +244,7 @@ if ticker_symbol:
             )
             / 100
         )
+      with col_dcf2:
         discount_rate = (
             st.slider("Tasso di Sconto / WACC (%)", 5.0, 15.0, 9.0, 0.5) / 100
         )
@@ -304,7 +305,7 @@ if ticker_symbol:
         )
 
     # ==========================================
-    # TAB 3: TREND DI BILANCIO & PREZZO (FILTRI + UTILE)
+    # TAB 3: TREND DI BILANCIO & PREZZO
     # ==========================================
     with tab3:
       st.subheader("📈 Trend Storico: Prezzo, Fatturato e Utile Netto")
@@ -486,51 +487,65 @@ if ticker_symbol:
     # ==========================================
     # TAB 5: ULTIME NOTIZIE
     # ==========================================
-   st.subheader("📰 Ultime Notizie")
-
-try:
-  news_list = ticker.news
-  if not news_list:
-    st.info("Nessuna notizia recente trovata per questo titolo.")
-  else:
-    for item in news_list:
-      # Gestione della struttura dati (diretta o annidata in 'content')
-      content = (
-          item.get("content", {})
-          if isinstance(item.get("content"), dict)
-          else {}
+    with tab5:
+      st.subheader(f"📰 Ultime Notizie e Aggiornamenti su {ticker_symbol}")
+      st.write(
+          "Notizie recenti di mercato, comunicati e articoli finanziari"
+          " correlati all'azienda."
       )
 
-      # Estrazione del titolo con fallback multipli
-      title = (
-          item.get("title")
-          or content.get("title")
-          or item.get("headline")
-          or "Titolo non disponibile"
-      )
+      try:
+        if not news:
+          st.info("Nessuna notizia recente trovata per questo titolo.")
+        else:
+          for item in news:
+            content = (
+                item.get("content", {})
+                if isinstance(item.get("content"), dict)
+                else {}
+            )
 
-      # Estrazione della fonte/editore con fallback multipli
-      publisher = (
-          item.get("publisher")
-          or content.get("provider", {}).get("displayName")
-          or content.get("publisher")
-          or "Fonte sconosciuta"
-      )
+            title = (
+                item.get("title")
+                or content.get("title")
+                or item.get("headline")
+                or "Titolo non disponibile"
+            )
 
-      # Estrazione del link dell'articolo con fallback multipli
-      link = (
-          item.get("link")
-          or item.get("clickThroughUrl", {}).get("url")
-          or content.get("clickThroughUrl", {}).get("url")
-          or content.get("canonicalUrl", {}).get("url")
-          or "#"
-      )
+            publisher = (
+                item.get("publisher")
+                or content.get("provider", {}).get("displayName")
+                or content.get("publisher")
+                or "Fonte sconosciuta"
+            )
 
-      # Rendering dell'interfaccia in Streamlit
-      with st.container():
-        st.markdown(f"**[{title}]({link})**")
-        st.caption(f"Fonte: {publisher}")
-        st.divider()
+            link = (
+                item.get("link")
+                or item.get("clickThroughUrl", {}).get("url")
+                or content.get("clickThroughUrl", {}).get("url")
+                or content.get("canonicalUrl", {}).get("url")
+                or "#"
+            )
 
-except Exception as e:
-  st.error(f"Errore nel recupero delle notizie: {e}")
+            provider_time = (
+                item.get("providerPublishTime")
+                or content.get("pubDate")
+                or None
+            )
+            date_str = ""
+            if provider_time:
+              try:
+                dt = datetime.fromtimestamp(int(provider_time))
+                date_str = dt.strftime("%d/%m/%Y alle %H:%M")
+              except Exception:
+                pass
+
+            with st.container():
+              st.markdown(f"### [{title}]({link})")
+              meta_text = f"📢 **Fonte:** {publisher}"
+              if date_str:
+                meta_text += f" | 🕒 **Data:** {date_str}"
+              st.caption(meta_text)
+              st.divider()
+      except Exception as e:
+        st.error(f"Errore nel recupero delle notizie: {e}")
