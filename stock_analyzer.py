@@ -1,3 +1,4 @@
+from datetime import datetime
 from curl_cffi import requests
 import numpy as np
 import pandas as pd
@@ -14,8 +15,8 @@ st.set_page_config(
 
 st.title("🔎 App N. 2: Stock Analyzer & Fair Value Engine")
 st.markdown(
-    "Analisi fondamentale, stima del Fair Value e salute finanziaria delle"
-    " aziende."
+    "Analisi fondamentale, stima del Fair Value, trend finanziari e notizie in"
+    " tempo reale."
 )
 
 # Sidebar - Selezione Titolo
@@ -41,14 +42,22 @@ def load_stock_data(symbol):
         t.balance_sheet if t.balance_sheet is not None else pd.DataFrame()
     )
     history = t.history(period="max") if t else pd.DataFrame()
-    return info, financials, cashflow, balance, history
+    news = t.news if hasattr(t, "news") and t.news else []
+    return info, financials, cashflow, balance, history, news
   except Exception as e:
-    return {}, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    return (
+        {},
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        pd.DataFrame(),
+        [],
+    )
 
 
 if ticker_symbol:
-  with st.spinner(f"Caricamento dati per {ticker_symbol}..."):
-    info, financials, cashflow, balance, history = load_stock_data(
+  with st.spinner(f"Caricamento dati e notizie per {ticker_symbol}..."):
+    info, financials, cashflow, balance, history, news = load_stock_data(
         ticker_symbol
     )
 
@@ -89,12 +98,13 @@ if ticker_symbol:
 
     st.divider()
 
-    # Tabs principali
-    tab1, tab2, tab3, tab4 = st.tabs([
+    # Tabs principali (Aggiunta la Tab delle Notizie)
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📊 Dashboard & Health Score",
         "💎 Stima Fair Value",
         "📈 Trend di Bilancio & Prezzo",
         "⚔️ Confronto Competitor",
+        "📰 Ultime Notizie",
     ])
 
     # ==========================================
@@ -304,21 +314,19 @@ if ticker_symbol:
           and not financials.empty
           and not history.empty
       ):
-        # Controlli di selezione (Periodo e Utile Netto)
         col_ctrl1, col_ctrl2 = st.columns([3, 1])
         with col_ctrl1:
           timeframe = st.radio(
               "Seleziona Periodo Prezzo:",
               ["3 Mesi", "1 Anno", "5 Anni", "10 Anni", "20 Anni", "Max"],
               horizontal=True,
-              index=2,  # Default a 5 Anni
+              index=2,
           )
         with col_ctrl2:
           show_net_income = st.checkbox(
               "Mostra Utile Netto", value=True, key="net_income_chk"
           )
 
-        # Filtraggio della history in base al periodo scelto
         hist_filtered = history.copy()
         if hist_filtered.index.tz is not None:
           hist_filtered.index = hist_filtered.index.tz_localize(None)
@@ -344,7 +352,6 @@ if ticker_symbol:
           hist_filtered = hist_filtered[
               hist_filtered.index >= (now - pd.DateOffset(years=20))
           ]
-        # "Max" mostra tutto
 
         rev_key = [
             k
@@ -361,7 +368,6 @@ if ticker_symbol:
 
         fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-        # 1. Linea del Prezzo Azione (Asse secondario - Destra)
         if "Close" in hist_filtered.columns:
           fig.add_trace(
               go.Scatter(
@@ -373,7 +379,6 @@ if ticker_symbol:
               secondary_y=True,
           )
 
-        # 2. Barre del Fatturato (Asse primario - Sinistra)
         if rev_key:
           rev_dates = financials.columns
           rev_values = financials.loc[rev_key[0]].values / 1e6
@@ -388,7 +393,6 @@ if ticker_symbol:
               secondary_y=False,
           )
 
-        # 3. Barre dell'Utile Netto (Se spuntato)
         if show_net_income and net_key:
           net_dates = financials.columns
           net_values = financials.loc[net_key[0]].values / 1e6
@@ -403,7 +407,6 @@ if ticker_symbol:
               secondary_y=False,
           )
 
-        # Layout del grafico
         fig.update_layout(
             title=f"Analisi di {ticker_symbol} - Periodo: {timeframe}",
             xaxis_title="Data",
@@ -479,3 +482,38 @@ if ticker_symbol:
               ),
               use_container_width=True,
           )
+
+    # ==========================================
+    # TAB 5: ULTIME NOTIZIE
+    # ==========================================
+    with tab5:
+      st.subheader(f"📰 Ultime Notizie e Aggiornamenti su {ticker_symbol}")
+      st.write(
+          "Notizie recenti di mercato, comunicati e articoli finanziari"
+          " correlati all'azienda."
+      )
+
+      if news and len(news) > 0:
+        for item in news:
+          title = item.get("title", "Titolo non disponibile")
+          publisher = item.get("publisher", "Fonte sconosciuta")
+          link = item.get("link", "#")
+          provider_time = item.get("providerPublishTime", None)
+
+          date_str = ""
+          if provider_time:
+            dt = datetime.fromtimestamp(provider_time)
+            date_str = dt.strftime("%d/%m/%Y alle %H:%M")
+
+          with st.container():
+            st.markdown(f"### [{title}]({link})")
+            meta_text = f"📢 **Fonte:** {publisher}"
+            if date_str:
+              meta_text += f" | 🕒 **Data:** {date_str}"
+            st.caption(meta_text)
+            st.divider()
+      else:
+        st.info(
+            "Nessuna notizia recente disponibile al momento per questo"
+            " ticker."
+        )
