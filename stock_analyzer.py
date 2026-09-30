@@ -486,34 +486,51 @@ if ticker_symbol:
     # ==========================================
     # TAB 5: ULTIME NOTIZIE
     # ==========================================
-    with tab5:
-      st.subheader(f"📰 Ultime Notizie e Aggiornamenti su {ticker_symbol}")
-      st.write(
-          "Notizie recenti di mercato, comunicati e articoli finanziari"
-          " correlati all'azienda."
+   st.subheader("📰 Ultime Notizie")
+
+try:
+  news_list = ticker.news
+  if not news_list:
+    st.info("Nessuna notizia recente trovata per questo titolo.")
+  else:
+    for item in news_list:
+      # Gestione della struttura dati (diretta o annidata in 'content')
+      content = (
+          item.get("content", {})
+          if isinstance(item.get("content"), dict)
+          else {}
       )
 
-      if news and len(news) > 0:
-        for item in news:
-          title = item.get("title", "Titolo non disponibile")
-          publisher = item.get("publisher", "Fonte sconosciuta")
-          link = item.get("link", "#")
-          provider_time = item.get("providerPublishTime", None)
+      # Estrazione del titolo con fallback multipli
+      title = (
+          item.get("title")
+          or content.get("title")
+          or item.get("headline")
+          or "Titolo non disponibile"
+      )
 
-          date_str = ""
-          if provider_time:
-            dt = datetime.fromtimestamp(provider_time)
-            date_str = dt.strftime("%d/%m/%Y alle %H:%M")
+      # Estrazione della fonte/editore con fallback multipli
+      publisher = (
+          item.get("publisher")
+          or content.get("provider", {}).get("displayName")
+          or content.get("publisher")
+          or "Fonte sconosciuta"
+      )
 
-          with st.container():
-            st.markdown(f"### [{title}]({link})")
-            meta_text = f"📢 **Fonte:** {publisher}"
-            if date_str:
-              meta_text += f" | 🕒 **Data:** {date_str}"
-            st.caption(meta_text)
-            st.divider()
-      else:
-        st.info(
-            "Nessuna notizia recente disponibile al momento per questo"
-            " ticker."
-        )
+      # Estrazione del link dell'articolo con fallback multipli
+      link = (
+          item.get("link")
+          or item.get("clickThroughUrl", {}).get("url")
+          or content.get("clickThroughUrl", {}).get("url")
+          or content.get("canonicalUrl", {}).get("url")
+          or "#"
+      )
+
+      # Rendering dell'interfaccia in Streamlit
+      with st.container():
+        st.markdown(f"**[{title}]({link})**")
+        st.caption(f"Fonte: {publisher}")
+        st.divider()
+
+except Exception as e:
+  st.error(f"Errore nel recupero delle notizie: {e}")
