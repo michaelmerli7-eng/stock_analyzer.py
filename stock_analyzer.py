@@ -2,6 +2,8 @@ from curl_cffi import requests
 import numpy as np
 import pandas as pd
 import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 import streamlit as st
 import yfinance as yf
 
@@ -13,7 +15,7 @@ st.set_page_config(
 st.title("🔎 App N. 2: Stock Analyzer & Fair Value Engine")
 st.markdown(
     "Analisi fondamentale, stima del Fair Value e salute finanziaria delle"
-    " aziende (Alternative a InvestingPro)."
+    " aziende."
 )
 
 # Sidebar - Selezione Titolo
@@ -30,9 +32,7 @@ ticker_symbol = (
 @st.cache_data(ttl=3600)
 def load_stock_data(symbol):
   try:
-    # Usa curl_cffi per impersonare Chrome e bypassare il blocco di Yahoo Finance
     session = requests.Session(impersonate="chrome")
-
     t = yf.Ticker(symbol, session=session)
     info = t.info if t.info else {}
     financials = t.financials if t.financials is not None else pd.DataFrame()
@@ -40,14 +40,17 @@ def load_stock_data(symbol):
     balance = (
         t.balance_sheet if t.balance_sheet is not None else pd.DataFrame()
     )
-    return info, financials, cashflow, balance
+    history = t.history(period="max") if t else pd.DataFrame()
+    return info, financials, cashflow, balance, history
   except Exception as e:
-    return {}, pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+    return {}, pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
 
 if ticker_symbol:
   with st.spinner(f"Caricamento dati per {ticker_symbol}..."):
-    info, financials, cashflow, balance = load_stock_data(ticker_symbol)
+    info, financials, cashflow, balance, history = load_stock_data(
+        ticker_symbol
+    )
 
   if not info or (
       "shortName" not in info
@@ -57,8 +60,7 @@ if ticker_symbol:
   ):
     st.error(
         f"Impossibile recuperare i dati per il ticker '{ticker_symbol}'."
-        " Verifica che sia corretto su Yahoo Finance (es. 'RACE' per Ferrari a"
-        " New York o 'RACE.MI' per Milano)."
+        " Verifica che sia corretto su Yahoo Finance."
     )
   else:
     # Intestazione Azienda
@@ -91,7 +93,7 @@ if ticker_symbol:
     tab1, tab2, tab3, tab4 = st.tabs([
         "📊 Dashboard & Health Score",
         "💎 Stima Fair Value",
-        "📈 Trend di Bilancio",
+        "📈 Trend di Bilancio & Prezzo",
         "⚔️ Confronto Competitor",
     ])
 
@@ -104,7 +106,6 @@ if ticker_symbol:
       score = 0
       checks = []
 
-      # 1. Redditività (ROE)
       roe = info.get("returnOnEquity", 0) or 0
       if roe > 0.15:
         score += 25
@@ -117,7 +118,6 @@ if ticker_symbol:
       else:
         checks.append("❌ **ROE Basso (< 8%)**: Bassa redditività del capitale.")
 
-      # 2. Margine Netto
       profit_margin = info.get("profitMargins", 0) or 0
       if profit_margin > 0.15:
         score += 25
@@ -127,14 +127,13 @@ if ticker_symbol:
         )
       elif profit_margin > 0.05:
         score += 15
-        checks.append("⚠ **Margine Netto Basso (5% - 15%)**: Margini accettabili.")
+        checks.append("⚠️ **Margine Netto Basso (5% - 15%)**: Margini accettabili.")
       else:
         checks.append(
             "❌ **Margine Netto Ridotto (< 5%)**: A rischio in caso di aumento"
             " dei costi."
         )
 
-      # 3. Indebitamento (Debt to Equity)
       debt_to_equity = (info.get("debtToEquity", 100) or 100) / 100
       if debt_to_equity < 0.8:
         score += 25
@@ -153,7 +152,6 @@ if ticker_symbol:
             "❌ **Debito Elevato (D/E > 1.5)**: Elevata leva finanziaria."
         )
 
-      # 4. Solvibilità di Breve Periodo (Current Ratio)
       current_ratio = info.get("currentRatio", 0) or 0
       if current_ratio > 1.5:
         score += 25
@@ -265,7 +263,7 @@ if ticker_symbol:
       v1, v2, v3 = st.columns(3)
 
       v1.metric(
-          "Prezzo Attuale",
+          "Prezzo Azione Attuale",
           f"{current_price:,.2f} {currency}" if current_price else "N/A",
       )
       v2.metric(
@@ -296,45 +294,90 @@ if ticker_symbol:
         )
 
     # ==========================================
-    # TAB 3: TREND DI BILANCIO
+    # TAB 3: TREND DI BILANCIO & PREZZO (DOPPIO ASSE)
     # ==========================================
     with tab3:
-      st.subheader("📈 Andamento Storico di Bilancio")
+      st.subheader(
+          "📈 Confronto Storico: Prezzo Azione vs Fatturato Annuale"
+      )
+      st.write(
+          "Questo grafico unisce l'andamento del prezzo giornaliero del titolo"
+          " (asse destro) con il fatturato registrato nei bilanci annuali"
+          " (colonne verdi, asse sinistro)."
+      )
 
-      if financials is not None and not financials.empty:
+      if (
+          financials is not None
+          and not financials.empty
+          and not history.empty
+      ):
         rev_key = [
             k
             for k in financials.index
             if "Total Revenue" in k or "Revenue" in k
         ]
-        net_key = [k for k in financials.index if "Net Income" in k]
 
-        if rev_key and net_key:
-          years = [str(col.year) for col in financials.columns]
-          revenues = financials.loc[rev_key[0]].values / 1e6
-          net_incomes = financials.loc[net_key[0]].values / 1e6
+        if rev_key:
+          # Creazione della figura con doppio asse Y
+          fig = make_subplots(specs=[[{"secondary_y": True}]])
 
-          df_chart = pd.DataFrame({
-              "Anno": years,
-              "Ricavi (€/M)": revenues,
-              "Utile Netto (€/M)": net_incomes,
-          }).iloc[::-1]
+          # 1. Linea del Prezzo Azione (Asse Y Secondario - Destra)
+          if "Close" in history.columns:
+            fig.add_trace(
+                go.Scatter(
+                    x=history.index,
+                    y=history["Close"],
+                    name="Prezzo Azione",
+                    line=dict(color="#1f77b4", width=2),
+                ),
+                secondary_y=True,
+            )
 
-          fig = px.bar(
-              df_chart,
-              x="Anno",
-              y=["Ricavi (€/M)", "Utile Netto (€/M)"],
-              barmode="group",
-              title=(
-                  f"Ricavi e Utili di {ticker_symbol} (Milioni {currency})"
+          # 2. Barre del Fatturato Annuale (Asse Y Primario - Sinistra)
+          rev_dates = financials.columns
+          rev_values = financials.loc[rev_key[0]].values / 1e6  # Convertito in Milioni
+
+          fig.add_trace(
+              go.Bar(
+                  x=rev_dates,
+                  y=rev_values,
+                  name=f"Fatturato ({currency} Mln)",
+                  marker_color="#2ca02c",
+                  opacity=0.6,
               ),
-              color_discrete_sequence=["#1f77b4", "#2ca02c"],
+              secondary_y=False,
           )
+
+          # Layout e assi
+          fig.update_layout(
+              title=f"Correlazione Prezzo / Fatturato - {ticker_symbol}",
+              xaxis_title="Data / Anno Fiscale",
+              hovermode="x unified",
+              legend=dict(
+                  orientation="h",
+                  yanchor="bottom",
+                  y=1.02,
+                  xanchor="right",
+                  x=1,
+              ),
+          )
+
+          fig.update_yaxes(
+              title_text=f"<b>Fatturato</b> (Milioni {currency})",
+              secondary_y=False,
+          )
+          fig.update_yaxes(
+              title_text=f"<b>Prezzo Azione</b> ({currency})", secondary_y=True
+          )
+
           st.plotly_chart(fig, use_container_width=True)
         else:
-          st.info("Dati dettagliati sui ricavi non disponibili.")
+          st.info(
+              "Dati dettagliati sul fatturato non disponibili per questo"
+              " titolo."
+          )
       else:
-        st.info("Rendiconto finanziario non disponibile per questo titolo.")
+        st.info("Dati storici o di bilancio insufficienti per il grafico.")
 
     # ==========================================
     # TAB 4: CONFRONTO COMPETITOR
